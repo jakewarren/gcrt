@@ -1,14 +1,17 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/apex/log"
+	"github.com/apex/log/handlers/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -25,26 +28,23 @@ var cmd = &cobra.Command{
 
 // Execute runs the application
 func Execute() {
+	log.SetHandler(cli.New(os.Stderr))
 	if err := cmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		log.Fatal(err.Error())
 	}
 }
 
 const gcrtURL = "https://crt.sh"
 
 var domain string
-
 var between string
-
-var days string
-
-var count string
+var days int
+var count bool
 
 func init() {
 	cmd.PersistentFlags().StringVar(&between, "between", "", "The dates to run the query for in the format start-date:end-date.  The dates should have the format YYYY-MM-DD")
-	cmd.PersistentFlags().StringVarP(&count, "count", "c", "", "Don't return the results just the count")
-	cmd.PersistentFlags().StringVar(&days, "days", "", "How many days back to query")
+	cmd.PersistentFlags().BoolVarP(&count, "count", "c", false, "Don't return the results just the count")
+	cmd.PersistentFlags().IntVar(&days, "days", -1, "How many days back to query")
 	cmd.PersistentFlags().StringVarP(&domain, "domain", "d", "", "Domain to find certificates for. % is a wildcard")
 	cmd.MarkPersistentFlagRequired("domain")
 }
@@ -58,13 +58,112 @@ func GetCerts() {
 	}
 	resp, err := client.Get(url)
 	if err != nil {
-		errors.Wrap(err, "Error Getting Response")
+		log.WithError(err).Fatal("Error Getting Response")
 	}
 	defer resp.Body.Close()
 	contents, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		errors.Wrap(err, "Error Reading Body")
+		log.WithError(err).Fatal("Error Reading Body")
 	}
-	fmt.Printf("%s\n", string(contents))
 
+	// massage the crt.sh output since it isn't valid JSON
+	contents = []byte(`[` + strings.Replace(string(contents), "}{", "},{", -1) + `]`)
+
+	var certs []CertResponse
+	err = json.Unmarshal(contents, &certs)
+	if err != nil {
+		log.WithError(err).Fatal("Error Unmarshalling JSON")
+	}
+
+	// remove duplicate certs since crt.sh returns both the leaf certificate and precertificate
+	certs = removeDuplicateCerts(certs)
+
+	// outputCerts will hold remaining certs after date filtering (if requested)
+	var outputCerts []CertResponse
+
+	if len(between) > 0 { // filter by date range
+		bDates := reSubMatchMap(`(?P<startdate>\d{4}-\d{2}-\d{2}):(?P<enddate>\d{4}-\d{2}-\d{2})`, between)
+
+		var startDate, endDate time.Time
+
+		if d, ok := bDates["startdate"]; ok {
+			startDate, err = time.Parse("2006-01-02", d)
+			if err != nil {
+				log.WithError(err).Fatal("Error parsing start date")
+			}
+		} else {
+			log.Fatal("start date not provided in valid format")
+		}
+		if d, ok := bDates["enddate"]; ok {
+			endDate, err = time.Parse("2006-01-02", d)
+			if err != nil {
+				log.WithError(err).Fatal("Error parsing end date")
+			}
+			endDate = endDate.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+		} else {
+			log.Fatal("end date not provided in valid format")
+		}
+
+		for _, c := range certs {
+			certDate, certParseErr := time.Parse("2006-01-02T15:04:05", c.NotBefore)
+
+			if certParseErr != nil {
+				log.WithError(certParseErr).Errorf("error parsing date in cert %d", c.MinCertID)
+				continue
+			}
+
+			if certDate.After(startDate) && certDate.Before(endDate) {
+				outputCerts = append(outputCerts, c)
+			}
+		}
+	} else if days > 0 { // filter certs by days ago threshold
+		thresholdDate := time.Now().AddDate(0, 0, -days)
+
+		for _, c := range certs {
+			certDate, certParseErr := time.Parse("2006-01-02T15:04:05", c.NotBefore)
+			if certParseErr != nil {
+				log.WithError(certParseErr).Errorf("error parsing date in cert %d", c.MinCertID)
+				continue
+			}
+			if certDate.After(thresholdDate) {
+				outputCerts = append(outputCerts, c)
+			}
+		}
+	}
+
+	if count {
+		fmt.Printf("Number of certs found: %d\n", len(outputCerts))
+		return
+	}
+	if len(outputCerts) > 1 {
+		output, _ := json.MarshalIndent(&outputCerts, "", "    ")
+		fmt.Println(string(output))
+	}
+}
+
+func removeDuplicateCerts(certs []CertResponse) []CertResponse {
+
+	m := make(map[string]struct{})
+	dedupedCerts := make([]CertResponse, 0)
+
+	for _, c := range certs {
+		// keep the first cert which is the leaf certificate
+		if _, ok := m[c.NameValue+c.NotBefore]; !ok {
+			m[c.NameValue+c.NotBefore] = struct{}{}
+			dedupedCerts = append(dedupedCerts, c)
+		}
+	}
+	return dedupedCerts
+}
+
+func reSubMatchMap(regEx, text string) (groupMatchMap map[string]string) {
+	var compRegEx = regexp.MustCompile(regEx)
+	match := compRegEx.FindStringSubmatch(text)
+	groupMatchMap = make(map[string]string)
+	for i, name := range compRegEx.SubexpNames() {
+		if i > 0 && i <= len(match) {
+			groupMatchMap[name] = match[i]
+		}
+	}
+	return
 }

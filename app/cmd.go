@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -142,6 +143,19 @@ func GetCerts() {
 		output, _ := json.MarshalIndent(&outputCerts, "", "    ")
 		fmt.Println(string(output))
 	}
+}
+
+type enrichedCertResponse CertResponse
+
+// MarshalJSON adds in a link to the crt.sh page for each cert
+func (c CertResponse) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		CertShLink string `json:"crt_sh_link"`
+		enrichedCertResponse
+	}{
+		CertShLink:           `https://crt.sh/?id=` + strconv.Itoa(c.MinCertID),
+		enrichedCertResponse: enrichedCertResponse(c),
+	})
 }
 
 func removeDuplicateCerts(certs []CertResponse) []CertResponse {

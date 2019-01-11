@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,8 +67,11 @@ func GetCerts() {
 		log.WithError(err).Fatal("Error Reading Body")
 	}
 
-	// massage the crt.sh output since it isn't valid JSON
-	contents = []byte(`[` + strings.Replace(string(contents), "}{", "},{", -1) + `]`)
+	// sometimes crt.sh doesn't return valid JSON, if so
+	// massage the crt.sh output to correct it
+	if !strings.HasPrefix(string(contents), "[") {
+		contents = []byte(`[` + strings.Replace(string(contents), "}{", "},{", -1) + `]`)
+	}
 
 	var certs []CertResponse
 	err = json.Unmarshal(contents, &certs)
@@ -117,7 +121,8 @@ func GetCerts() {
 			}
 		}
 	} else if days > 0 { // filter certs by days ago threshold
-		thresholdDate := time.Now().AddDate(0, 0, -days)
+		now := time.Now()
+		thresholdDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -days)
 
 		for _, c := range certs {
 			certDate, certParseErr := time.Parse("2006-01-02T15:04:05", c.NotBefore)
@@ -129,6 +134,8 @@ func GetCerts() {
 				outputCerts = append(outputCerts, c)
 			}
 		}
+	} else {
+		outputCerts = certs
 	}
 
 	if count {
@@ -139,6 +146,19 @@ func GetCerts() {
 		output, _ := json.MarshalIndent(&outputCerts, "", "    ")
 		fmt.Println(string(output))
 	}
+}
+
+type enrichedCertResponse CertResponse
+
+// MarshalJSON adds in a link to the crt.sh page for each cert
+func (c CertResponse) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		CertShLink string `json:"crt_sh_link"`
+		enrichedCertResponse
+	}{
+		CertShLink:           `https://crt.sh/?id=` + strconv.Itoa(c.MinCertID),
+		enrichedCertResponse: enrichedCertResponse(c),
+	})
 }
 
 func removeDuplicateCerts(certs []CertResponse) []CertResponse {

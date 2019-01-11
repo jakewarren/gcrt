@@ -67,8 +67,11 @@ func GetCerts() {
 		log.WithError(err).Fatal("Error Reading Body")
 	}
 
-	// massage the crt.sh output since it isn't valid JSON
-	contents = []byte(`[` + strings.Replace(string(contents), "}{", "},{", -1) + `]`)
+	// sometimes crt.sh doesn't return valid JSON, if so
+	// massage the crt.sh output to correct it
+	if !strings.HasPrefix(string(contents), "[") {
+		contents = []byte(`[` + strings.Replace(string(contents), "}{", "},{", -1) + `]`)
+	}
 
 	var certs []CertResponse
 	err = json.Unmarshal(contents, &certs)

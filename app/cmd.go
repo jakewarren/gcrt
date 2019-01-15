@@ -13,6 +13,7 @@ import (
 
 	"github.com/apex/log"
 	"github.com/apex/log/handlers/cli"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/spf13/cobra"
 )
 
@@ -54,9 +55,11 @@ func init() {
 func GetCerts() {
 	cleanDomain := strings.Replace(domain, "%", "%25", -1)
 	url := fmt.Sprintf("%s/?q=%s&output=json", gcrtURL, cleanDomain)
-	client := &http.Client{
-		Timeout: time.Second * 3,
+	client := retryablehttp.NewClient()
+	client.HTTPClient = &http.Client{
+		Timeout: time.Second * 30,
 	}
+	client.Logger.SetOutput(ioutil.Discard)
 	resp, err := client.Get(url)
 	if err != nil {
 		log.WithError(err).Fatal("Error Getting Response")

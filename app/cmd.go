@@ -126,14 +126,16 @@ func GetCerts() {
 	} else if days > 0 { // filter certs by days ago threshold
 		now := time.Now()
 		thresholdDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -days)
-
 		for _, c := range certs {
 			certDate, certParseErr := time.Parse("2006-01-02T15:04:05", c.NotBefore)
 			if certParseErr != nil {
 				log.WithError(certParseErr).Errorf("error parsing date in cert %d", c.MinCertID)
 				continue
 			}
-			if certDate.After(thresholdDate) {
+
+			// set the certficate not before date to midnight in local timezone
+			certDate = time.Date(certDate.Year(), certDate.Month(), certDate.Day(), 0, 0, 0, 0, now.Location())
+			if thresholdDate == certDate || certDate.After(thresholdDate) {
 				outputCerts = append(outputCerts, c)
 			}
 		}

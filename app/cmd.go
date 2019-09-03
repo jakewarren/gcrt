@@ -65,21 +65,22 @@ func GetCerts() {
 		log.WithError(err).Fatal("Error Getting Response")
 	}
 	defer resp.Body.Close()
-	contents, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.WithError(err).Fatal("Error Reading Body")
-	}
+	dec := json.NewDecoder(resp.Body)
 
-	// sometimes crt.sh doesn't return valid JSON, if so
-	// massage the crt.sh output to correct it
-	if !strings.HasPrefix(string(contents), "[") {
-		contents = []byte(`[` + strings.Replace(string(contents), "}{", "},{", -1) + `]`)
-	}
+	certs := make([]CertResponse, 0)
 
-	var certs []CertResponse
-	err = json.Unmarshal(contents, &certs)
-	if err != nil {
-		log.WithError(err).Fatal("Error Unmarshalling JSON")
+	// The crt.sh API is a little funky... It returns multiple
+	// JSON objects with no delimiter, so you just have to keep
+	// attempting a decode until you hit EOF
+	for {
+		var c []CertResponse
+
+		decodeErr := dec.Decode(&c)
+		if decodeErr != nil {
+			break
+		}
+
+		certs = append(certs, c...)
 	}
 
 	// remove duplicate certs since crt.sh returns both the leaf certificate and precertificate

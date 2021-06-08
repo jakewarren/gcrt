@@ -3,7 +3,6 @@ package app
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"regexp"
@@ -38,10 +37,12 @@ func Execute() {
 
 const gcrtURL = "https://crt.sh"
 
-var domain string
-var between string
-var days int
-var count bool
+var (
+	domain  string
+	between string
+	days    int
+	count   bool
+)
 
 func init() {
 	cmd.PersistentFlags().StringVar(&between, "between", "", "The dates to run the query for in the format start-date:end-date.  The dates should have the format YYYY-MM-DD")
@@ -59,7 +60,7 @@ func GetCerts() {
 	client.HTTPClient = &http.Client{
 		Timeout: time.Second * 30,
 	}
-	client.Logger.SetOutput(ioutil.Discard)
+	client.Logger = nil
 	resp, err := client.Get(url)
 	if err != nil {
 		log.WithError(err).Fatal("Error Getting Response")
@@ -116,7 +117,7 @@ func GetCerts() {
 			certDate, certParseErr := time.Parse("2006-01-02T15:04:05", c.NotBefore)
 
 			if certParseErr != nil {
-				log.WithError(certParseErr).Errorf("error parsing date in cert %d", c.MinCertID)
+				log.WithError(certParseErr).Errorf("error parsing date in cert %d", c.ID)
 				continue
 			}
 
@@ -130,7 +131,7 @@ func GetCerts() {
 		for _, c := range certs {
 			certDate, certParseErr := time.Parse("2006-01-02T15:04:05", c.NotBefore)
 			if certParseErr != nil {
-				log.WithError(certParseErr).Errorf("error parsing date in cert %d", c.MinCertID)
+				log.WithError(certParseErr).Errorf("error parsing date in cert %d", c.ID)
 				continue
 			}
 
@@ -162,13 +163,12 @@ func (c CertResponse) MarshalJSON() ([]byte, error) {
 		CertShLink string `json:"crt_sh_link"`
 		enrichedCertResponse
 	}{
-		CertShLink:           `https://crt.sh/?id=` + strconv.Itoa(c.MinCertID),
+		CertShLink:           `https://crt.sh/?id=` + strconv.Itoa(c.ID),
 		enrichedCertResponse: enrichedCertResponse(c),
 	})
 }
 
 func removeDuplicateCerts(certs []CertResponse) []CertResponse {
-
 	m := make(map[string]struct{})
 	dedupedCerts := make([]CertResponse, 0)
 
@@ -183,7 +183,7 @@ func removeDuplicateCerts(certs []CertResponse) []CertResponse {
 }
 
 func reSubMatchMap(regEx, text string) (groupMatchMap map[string]string) {
-	var compRegEx = regexp.MustCompile(regEx)
+	compRegEx := regexp.MustCompile(regEx)
 	match := compRegEx.FindStringSubmatch(text)
 	groupMatchMap = make(map[string]string)
 	for i, name := range compRegEx.SubexpNames() {
